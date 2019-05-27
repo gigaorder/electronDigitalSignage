@@ -1,20 +1,22 @@
 import React from 'react';
 import moment from 'moment';
-import PlaylistManager from '../helpers/playlist';
 import ScheduleManager from '../helpers/schedule';
 import { SUPPORTED_VIDEO, SUPPORTED_IMAGE, getAnimationText } from '../constants/Slide';
-import { base_url } from '../config';
-import styled from 'styled-components';
+import styled, { keyframes } from 'styled-components';
 import * as Animations from 'react-animations';
+import { getFilePath } from '../helpers/downloadFile';
+import { ContentHistory } from '../api/video';
+import { getContentHistory, saveLocalContentHistoryError } from '../helpers/contentHistory';
+import { getToken } from '../helpers/utils';
 
 const MAX_COUNT = 1000;
 
 
 const Video = styled.video`
-  animation: 1s ${props => props.animation ? Animations[props.animation] : ''};
+  ${props => props.animation ? `animation: 0.3s ${keyframes`${Animations[props.animation]}`}` : ''};
 `;
 const Image = styled.img`
-  animation: 1s ${props => props.animation ? Animations[props.animation] : ''};
+  ${props => props.animation ? `animation: 0.3s ${keyframes`${Animations[props.animation]}`}` : ''};
 `;
 
 export default class Slide extends React.Component {
@@ -30,7 +32,6 @@ export default class Slide extends React.Component {
     begin: null,
     playlist: {},
     slide: [],
-    flag: false,
     playNext: false
     // screenHeight: Dimensions.get('screen').height,
     // screenWidth: Dimensions.get('screen').width
@@ -53,20 +54,19 @@ export default class Slide extends React.Component {
   };
 
   setNextSlide = () => {
-    // this.requestContentHistory(this.state.current);
+    this.requestContentHistory(this.state.current);
     this.setState(state => {
       return {
         current: this.getNewSlideIndex(1),
         count: (state.count + 1) % MAX_COUNT,
         prev: state.current,
         pausedText: 'Play',
-        flag: false,
         renderBackground: true,
         renderNext: false,
         begin: new Date()
       };
     }, () => {
-      this.video && this.video.play();
+      this.play();
       setTimeout(() => {
         this.setState({ renderBackground: false });
 
@@ -75,6 +75,42 @@ export default class Slide extends React.Component {
       this.checkIfMediaNeedSchedule(this.state.current);
     });
     // this.seekToStart();
+  };
+
+  play = () => {
+    this.video && typeof this.video.play === 'function' && this.video.play();
+  };
+
+  requestContentHistory = (index) => {
+    const {
+      begin,
+      slide
+    } = this.state;
+    if (!slide[index]) {
+      return;
+    }
+    const isVideo = SUPPORTED_VIDEO.indexOf(slide[index].ext) > -1;
+    const serverSettingDuration = slide[index].duration / 1000;
+    const contentHistory = {
+      begin: begin,
+      duration: serverSettingDuration || (isVideo ? this.totalVideoDuration : 3),
+      content: slide[index].id
+    };
+    const localContentHistory = getContentHistory();
+    const endPoint = {
+      contentHistory: localContentHistory ? [contentHistory, ...localContentHistory] : [contentHistory],
+      deviceToken: getToken()
+    };
+    ContentHistory(
+      endPoint
+    ).then(result => {
+      if (result.status !== 200) {
+        saveLocalContentHistoryError(contentHistory);
+      }
+      localStorage.removeItem('content-history');
+    }).catch(err => {
+      saveLocalContentHistoryError(contentHistory);
+    });
   };
 
   componentDidUpdate(prevProps, prevState, snapshot) {
@@ -86,8 +122,8 @@ export default class Slide extends React.Component {
         count: 0,
         begin: new Date(),
         slide: this.state.playlist.content.filter(i => i.media).map(i => {
-          const { effect, media: { ext, name, _id, path } } = i;
-          const url = `${base_url}/video/${path}`;
+          const { effect, media: { ext, name, _id } } = i;
+          const url = getFilePath(name + ext);
           const link = {
             id: _id,
             url: url,
@@ -104,14 +140,11 @@ export default class Slide extends React.Component {
   setPlayList = () => {
     console.log('check playlist');
     this.setPlaylistTimeout = setTimeout(this.setPlayList, 2000);
-    if (this.state.flag === true) {
-      return;
-    }
     const now = moment();
     const schedule = ScheduleManager.getSchedule();
     let current = null;
     const currentSchedule = schedule.filter(s => {
-      return now.isBetween(moment(s.activeFrom), moment(s.activeTo), null, []);
+      return now.isBetween(moment(s.activeFrom), moment(s.activeTo), null, '[)');
     });
     currentSchedule.find(s => {
       const currentPlaylist = s.weekdaySchedule.find(weekday => {
@@ -131,6 +164,7 @@ export default class Slide extends React.Component {
             }
           }
         }
+        return false;
       });
 
       if (currentPlaylist) {
@@ -174,9 +208,6 @@ export default class Slide extends React.Component {
       slide
     } = this.state;
     const currentImage = slide[current];
-    this.setState({
-      flag: true
-    });
     let timeout;
     if (SUPPORTED_IMAGE.includes(currentImage.ext)) {
       timeout = currentImage.duration || 3000;
@@ -216,7 +247,6 @@ export default class Slide extends React.Component {
       return null;
     } else {
       const {
-        defause,
         slide
       } = this.state;
       // const current = this.props.slide[i];
@@ -230,10 +260,7 @@ export default class Slide extends React.Component {
             key={this.getBackgroundCount()}
             animation={'fadeOut'}
             src={current.url}
-            style={{
-              display: 'flex',
-              flex: 1
-            }}
+            style={viewStyle(0)}
           />
         );
       } else if (SUPPORTED_VIDEO.indexOf(current.ext) !== -1) {
@@ -242,16 +269,8 @@ export default class Slide extends React.Component {
             duration={0}
             key={this.getBackgroundCount()}
             animation={'fadeOut'}
-            // useNativeDriver={true}
-            // useTextureView={false}
-            style={{
-              display: 'flex',
-              flex: 1
-            }}
+            style={viewStyle(0)}
             src={current.url}
-            // repeat={false}
-            // paused={true}
-            // resizeMode={this.state.resizeMode}
 
           />
         );
@@ -262,38 +281,29 @@ export default class Slide extends React.Component {
 
   renderSlide = (i) => {
     const {
-      resizeMode,
-      slide,
-      defause
+      slide
     } = this.state;
     // const current = this.props.slide[i];
     const current = slide.length > 0 ? slide[i] : null;
     if (!current) {
       return <img
+        alt="Cannot load"
         src={require('../assets/images/default_slide.jpg')}
-        style={{
-          display: 'flex',
-          flex: 1
-        }}
+        style={viewStyle(1)}
       />;
     }
     if (SUPPORTED_IMAGE.indexOf(current.ext) !== -1) {
       return (
         <Image
+          alt="Cannot load"
           key={this.state.count + current.url}
           // useNativeDriver={true}
           animation={getAnimationText(current.effect)}
           // duration={300}
-          ref={ref => {
-            this.handleImage = ref;
-          }}
           onError={() => console.log('eror whn load img')}
           // easing="linear"
           src={current.url}
-          style={{
-            display: 'flex',
-            flex: 1
-          }}
+          style={viewStyle(1)}
         />
       );
     } else if (SUPPORTED_VIDEO.indexOf(current.ext) !== -1) {
@@ -305,16 +315,16 @@ export default class Slide extends React.Component {
           // useTextureView={false}
           animation={getAnimationText(current.effect)}
           // duration={300}
-          style={{
-            display: 'flex',
-            flex: 1
-          }}
+          style={viewStyle(1)}
           src={current.url}
-          ref={ref => {
+          innerRef={ref => {
             this.video = ref;
           }}
           onEnded={() => {
             this.setNextSlide();
+          }}
+          onLoadedMetadata={() => {
+            this.totalVideoDuration = this.video.duration;
           }}
           onError={(e) => {
             console.log(e);
@@ -342,9 +352,7 @@ export default class Slide extends React.Component {
 
   prepareRenderNextSlide(i) {
     const {
-      resizeMode,
-      slide,
-      defause
+      slide
     } = this.state;
     // const current = this.props.slide[i];
     const current = slide.length > 0 ? slide[i] : null;
@@ -358,10 +366,7 @@ export default class Slide extends React.Component {
           // useNativeDriver={true}
           // useTextureView={false}
           src={current.url}
-          style={{
-            display: 'flex',
-            flex: 1
-          }}
+          style={[{ opacity: 0, width: 0, height: 0 }]}
           // paused={true}
           // paused={!this.state.playNext}
           // resizeMode={this.state.resizeMode}
@@ -371,13 +376,14 @@ export default class Slide extends React.Component {
   }
 
   render() {
+    console.log(window.innerWidth);
     const {
       prev,
       current
     } = this.state;
 
     return (
-      <div style={{ display: 'flex', flex: 1 }}>
+      <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
         {this.state.renderBackground && this.renderBackground(prev)}
         {this.renderSlide(current)}
         {this.state.renderNext && this.prepareRenderNextSlide(this.getNewSlideIndex(1))}
@@ -385,3 +391,15 @@ export default class Slide extends React.Component {
     );
   }
 }
+
+const viewStyle = (zIndex = 1) => ({
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  zIndex: zIndex,
+  width: '100vw',
+  height: '100vh',
+  objectFit: 'cover'
+});
