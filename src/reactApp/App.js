@@ -253,7 +253,7 @@ class App extends React.Component {
 
     return (
       <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column' }}>
-        {deviceCode ? <span style={{ color: '#000', flexShring: 1 }}>-{status}</span> : null}
+        {deviceCode ? <span style={{ color: '#000', flexShrink: 1 }}>-{status}</span> : null}
         {
           (downloading && progress && !isNaN(progress)) ?
             <div style={{ width: 200, height: 60, zIndex: 100 }}>

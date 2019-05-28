@@ -286,11 +286,9 @@ export default class Slide extends React.Component {
     // const current = this.props.slide[i];
     const current = slide.length > 0 ? slide[i] : null;
     if (!current) {
-      return <img
-        alt="Cannot load"
-        src={require('../assets/images/default_slide.jpg')}
-        style={viewStyle(1)}
-      />;
+      return (
+        null
+      );
     }
     if (SUPPORTED_IMAGE.indexOf(current.ext) !== -1) {
       return (
